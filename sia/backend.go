@@ -6,12 +6,18 @@ import (
 	"log"
 	"math"
 	"os"
+	"context"
 	"strings"
 	"sync"
 	"time"
+	"reflect"
 
-	"gitlab.com/NebulousLabs/Sia/modules"
-	"gitlab.com/NebulousLabs/Sia/node/api/client"
+	//"gitlab.com/NebulousLabs/Sia/modules"
+	//"gitlab.com/NebulousLabs/Sia/node/api/client"
+	"go.sia.tech/siad/modules"
+	//"go.sia.tech/siad/node/api/client"
+
+	"go.sia.tech/renterd/worker"
 
 	"github.com/javgh/sia-nbdserver/config"
 )
@@ -20,10 +26,10 @@ type (
 	backendState int
 
 	Backend struct {
-		state      backendState
-		mutex      *sync.Mutex
-		cache      *cache
-		httpClient *client.Client
+		state      		backendState
+		mutex      		*sync.Mutex
+		cache      		*cache
+		workerClient	*worker.Client
 	}
 
 	BackendSettings struct {
@@ -97,17 +103,22 @@ func NewBackend(settings BackendSettings) (*Backend, error) {
 		pages:     make([]pageIODetails, pageCount),
 	}
 
-	siaPassword, err := config.ReadPasswordFile(settings.SiaPasswordFile)
+	siaPass, err := config.ReadPasswordFile(settings.SiaPasswordFile)
 	if err != nil {
 		return nil, err
 	}
+	fmt.Println( siaPass )
 
+	/*
 	httpClient := client.Client{
 		Address:  settings.SiaDaemonAddress,
 		Password: siaPassword,
 	}
+	*/
 
-	uploadedPages, err := getUploadedPages(&httpClient, false)
+	workerClient := worker.NewClient("http://127.0.0.1:9980/api/worker", "r3n7rD#aP1g1mm1D4C42hH*")
+
+	uploadedPages, err := getUploadedPages(workerClient, false)
 	if err != nil {
 		return nil, err
 	}
@@ -129,11 +140,13 @@ func NewBackend(settings BackendSettings) (*Backend, error) {
 	}
 
 	backend := Backend{
-		state:      available,
-		mutex:      &sync.Mutex{},
-		cache:      &cache,
-		httpClient: &httpClient,
+		state:      		available,
+		mutex:      		&sync.Mutex{},
+		cache:      		&cache,
+		workerClient:		workerClient,
 	}
+
+	fmt.Println("backend.handleActions")
 
 	_, err = backend.handleActions(actions)
 	if err != nil {
@@ -181,7 +194,9 @@ func (b *Backend) handleActions(actions []action) (bool, error) {
 			}
 
 			cachePath := asCachePath(action.page)
-			_, err = b.httpClient.RenterDownloadFullGet(siaPath, cachePath, false)
+			fmt.Println( siaPath, cachePath )
+			//_, err = b.httpClient.RenterDownloadFullGet(siaPath, cachePath, false)
+			//_, err = b.httpClient.RenterDownloadFullGet(siaPath, cachePath, false, true)
 			if err != nil {
 				return false, err
 			}
@@ -194,11 +209,27 @@ func (b *Backend) handleActions(actions []action) (bool, error) {
 			}
 
 			cachePath := asCachePath(action.page)
-			err = b.httpClient.RenterUploadForcePost(
-				cachePath, siaPath, defaultDataPieces, defaultParityPieces, true)
+
+			fmt.Println( cachePath, siaPath )
+			//err = b.httpClient.RenterUploadForcePost(
+			//	cachePath, siaPath, defaultDataPieces, defaultParityPieces, true)
+			//if err != nil {
+			//	return false, err
+			//}
+
+			f, err := os.Open( cachePath )
 			if err != nil {
-				return false, err
-			}
+        return false, err
+      }
+
+			fmt.Println("UploadObject", siaPath.String(), "START" )
+			err = b.workerClient.UploadObject( context.Background(), f, siaPath.String() )
+			fmt.Println("UploadObject", siaPath.String(), "END" )
+			f.Close()
+			if err != nil {
+
+        return false, err
+      }
 		case postponeUpload:
 			log.Printf("Postponing upload for page %d\n", action.page)
 
@@ -207,7 +238,8 @@ func (b *Backend) handleActions(actions []action) (bool, error) {
 				return false, err
 			}
 
-			err = b.httpClient.RenterFileDeletePost(siaPath)
+			fmt.Println( siaPath )
+			//err = b.httpClient.RenterFileDeletePost(siaPath)
 			if err != nil {
 				return false, err
 			}
@@ -269,7 +301,7 @@ func (b *Backend) maintenance() error {
 		return nil
 	}
 
-	uploadedPages, err := getUploadedPages(b.httpClient, true)
+	uploadedPages, err := getUploadedPages(b.workerClient, true)
 	if err != nil {
 		return err
 	}
@@ -421,29 +453,48 @@ func (b *Backend) Wait() {
 	}
 }
 
-func getUploadedPages(httpClient *client.Client, checkRedundancy bool) ([]page, error) {
+func getUploadedPages(workerClient *worker.Client, checkRedundancy bool) ([]page, error) {
 	pages := []page{}
 
-	renterFiles, err := httpClient.RenterFilesGet(useCachedRenterInfo)
-	if err != nil {
-		return pages, err
-	}
+	fmt.Println("getUploadedPages")
+	fmt.Println( useCachedRenterInfo )
 
-	for _, fileInfo := range renterFiles.Files {
-		if !isRelevantSiaPath(fileInfo.SiaPath.String()) {
-			continue
-		}
+	//renterFiles, err := httpClient.RenterFilesGet(useCachedRenterInfo)
+	renterFiles, _ := workerClient.ObjectEntries( context.Background(), "/"+siaPathPrefix+"/" )
+	//if err != nil {
+	//	return pages, err
+	//}
 
-		page, err := getPageFromSiaPath(fileInfo.SiaPath.String())
+	_t := reflect.TypeOf( renterFiles )
+
+	fmt.Println( _t )
+
+	fmt.Println( renterFiles )
+
+	return pages, nil
+
+	for _, fileInfo := range renterFiles {
+		//if !isRelevantSiaPath(fileInfo.SiaPath.String()) {
+		//	continue
+		//}
+
+		fmt.Println( fileInfo )
+
+		page, err := getPageFromSiaPath( fileInfo )
 		if err != nil {
 			return pages, err
 		}
 
-		uploadComplete := fileInfo.Available && fileInfo.Recoverable &&
-			(!checkRedundancy || fileInfo.Redundancy >= minimumRedundancy)
-		if uploadComplete {
+
+		// I think if a object is returned by workerClient.ObjectEntries
+		// its been uploaded.
+
+		//uploadComplete := fileInfo.Available && fileInfo.Recoverable &&
+		//	(!checkRedundancy || fileInfo.Redundancy >= minimumRedundancy)
+		//if uploadComplete {
 			pages = append(pages, page)
-		}
+		//}
+
 	}
 
 	return pages, nil
