@@ -10,7 +10,7 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"reflect"
+	//"reflect"
 
 	//"gitlab.com/NebulousLabs/Sia/modules"
 	//"gitlab.com/NebulousLabs/Sia/node/api/client"
@@ -223,7 +223,7 @@ func (b *Backend) handleActions(actions []action) (bool, error) {
       }
 
 			fmt.Println("UploadObject", siaPath.String(), "START" )
-			err = b.workerClient.UploadObject( context.Background(), f, siaPath.String() )
+			err = b.workerClient.UploadObject( context.Background(), f, siaPath.String()+"?minshards=2&totalshards=5" )
 			fmt.Println("UploadObject", siaPath.String(), "END" )
 			f.Close()
 			if err != nil {
@@ -457,21 +457,26 @@ func getUploadedPages(workerClient *worker.Client, checkRedundancy bool) ([]page
 	pages := []page{}
 
 	fmt.Println("getUploadedPages")
-	fmt.Println( useCachedRenterInfo )
+	//fmt.Println( useCachedRenterInfo )
+
+	_path := siaPathPrefix+"/"
+	fmt.Println( _path )
 
 	//renterFiles, err := httpClient.RenterFilesGet(useCachedRenterInfo)
-	renterFiles, _ := workerClient.ObjectEntries( context.Background(), "/"+siaPathPrefix+"/" )
-	//if err != nil {
-	//	return pages, err
-	//}
+	renterFiles, err := workerClient.ObjectEntries( context.Background(), _path )
+	if err != nil {
+		fmt.Println("workerClient.ObjectEntries ERROR")
+		return pages, nil
+		//return pages, err
+	}
 
-	_t := reflect.TypeOf( renterFiles )
+	//_t := reflect.TypeOf( renterFiles )
 
-	fmt.Println( _t )
+	//fmt.Println( _t )
 
 	fmt.Println( renterFiles )
 
-	return pages, nil
+	//return pages, nil
 
 	for _, fileInfo := range renterFiles {
 		//if !isRelevantSiaPath(fileInfo.SiaPath.String()) {
@@ -534,7 +539,7 @@ func isRelevantSiaPath(siaPath string) bool {
 func getPageFromSiaPath(siaPath string) (page, error) {
 	var page page
 
-	format := fmt.Sprintf("%s/page%%d", siaPathPrefix)
+	format := fmt.Sprintf("/%s/page%%d", siaPathPrefix)
 	_, err := fmt.Sscanf(siaPath, format, &page)
 	if err != nil {
 		return 0, err
