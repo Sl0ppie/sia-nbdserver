@@ -197,6 +197,14 @@ func (b *Backend) handleActions(actions []action) (bool, error) {
 			fmt.Println( siaPath, cachePath )
 			//_, err = b.httpClient.RenterDownloadFullGet(siaPath, cachePath, false)
 			//_, err = b.httpClient.RenterDownloadFullGet(siaPath, cachePath, false, true)
+			f, err := os.Create( cachePath )
+      if err != nil {
+        return false, err
+      }
+
+			err = b.workerClient.DownloadObject( context.Background(), f, siaPath.String()+"?minshards=2&totalshards=5" )
+			f.Close()
+			fmt.Println("DownloadObject", siaPath.String(), "END" )
 			if err != nil {
 				return false, err
 			}
